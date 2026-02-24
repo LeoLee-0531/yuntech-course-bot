@@ -142,6 +142,7 @@ def job():
 
             if success:
                 enrolled, limit, name = available_courses[course_id]
+                logger.info(f"[{ua.account}] 成功加選 {course_id}")
                 msg = (
                     f"🎉 選課成功！\n"
                     f"課程：{name} ({course_id})"

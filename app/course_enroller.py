@@ -203,7 +203,6 @@ class CourseEnroller:
                     msg = msg_label.text.strip() if msg_label else ""
 
                     if "成功" in msg or "完成選課" in msg:
-                        logger.info(f"Enrollment SUCCESS for {course_id}")
                         success = True
                         break
 
