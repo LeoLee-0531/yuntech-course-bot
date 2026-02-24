@@ -7,7 +7,11 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-class LineNotifier:
+class BaseNotifier:
+    def send_message(self, text: str, mention_user_ids: list = None):
+        pass
+
+class LineNotifier(BaseNotifier):
     def __init__(self):
         self.token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
         self.group_id = os.getenv("LINE_GROUP_ID")
@@ -15,7 +19,6 @@ class LineNotifier:
 
     def send_message(self, text: str, mention_user_ids: list = None):
         if not self.token or not self.group_id:
-            logger.info(f"send message: {text}")
             return
 
         headers = {
@@ -55,8 +58,37 @@ class LineNotifier:
         try:
             response = requests.post(self.api_url, headers=headers, json=payload, timeout=10)
             response.raise_for_status()
+            logger.info("LINE notification sent successfully")
         except Exception as e:
-            print(f"Failed to send notification: {e}")
+            logger.error(f"Failed to send LINE notification: {e}")
             if hasattr(e, 'response') and e.response is not None:
-                print(f"Details: {e.response.text}")
-            raise
+                logger.error(f"Details: {e.response.text}")
+
+class DiscordNotifier(BaseNotifier):
+    def __init__(self):
+        self.webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+
+    def send_message(self, text: str, mention_user_ids: list = None):
+        if not self.webhook_url:
+            return
+
+        payload = {
+            "content": text
+        }
+
+        try:
+            response = requests.post(self.webhook_url, json=payload, timeout=10)
+            response.raise_for_status()
+            logger.info("Discord notification sent successfully")
+        except Exception as e:
+            logger.error(f"Failed to send Discord notification: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Details: {e.response.text}")
+
+class NotificationManager:
+    def __init__(self):
+        self.notifiers = [LineNotifier(), DiscordNotifier()]
+        
+    def send_message(self, text: str, mention_user_ids: list = None):
+        for notifier in self.notifiers:
+            notifier.send_message(text, mention_user_ids)

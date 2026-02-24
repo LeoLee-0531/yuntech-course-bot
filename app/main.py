@@ -4,7 +4,7 @@ import time
 import schedule
 from dotenv import load_dotenv
 from app.scraper import CourseScraper
-from app.notifier import LineNotifier
+from app.notifier import NotificationManager
 from app.state import State
 from app.api_client import SessionManager
 from app.captcha_solver import CaptchaSolver
@@ -71,7 +71,7 @@ def load_config():
 # 使用共享會話的抓取器（不需登入）
 scraper_session = SessionManager()
 scraper = CourseScraper(scraper_session)
-notifier = LineNotifier()
+notifier = NotificationManager()
 state = State()
 
 # 初始載入
@@ -138,7 +138,7 @@ def job():
             if success:
                 enrolled, limit, name = available_courses[course_id]
                 msg = (
-                    f"🎉 選課成功！\n\n"
+                    f"🎉 選課成功！\n"
                     f"課程：{name} ({course_id})"
                 )
                 notifier.send_message(msg, mention_user_ids=[ua.line_user_id])
