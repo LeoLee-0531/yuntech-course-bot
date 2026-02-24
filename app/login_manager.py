@@ -6,7 +6,6 @@ from app.api_client import SessionManager
 from app.captcha_solver import CaptchaSolver
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 class LoginManager:
     LOGIN_URL = "https://webapp.yuntech.edu.tw/YunTechSSO/Account/Login"
