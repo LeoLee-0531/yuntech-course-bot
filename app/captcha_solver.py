@@ -2,6 +2,9 @@ import base64
 import numpy as np
 import cv2
 import easyocr
+import warnings
+
+warnings.filterwarnings("ignore", message="'pin_memory' argument is set as true")
 
 class CaptchaSolver:
     def __init__(self):

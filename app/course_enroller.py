@@ -111,13 +111,14 @@ class CourseEnroller:
             soup_next = BeautifulSoup(resp_next.text, 'html.parser')
             logger.debug("POSTed 下一步 button")
 
-            # 重試迴圈：辨識驗證碼（最多重試 5 次）
+            # 重試迴圈：辨識驗證碼（最多重試 5 次，空字串不計入次數）
             current_soup = soup_next
             max_captcha_retries = 5
             msg = "未知結果"
             success = False
+            captcha_attempt = 0  # 實際送出次數
 
-            for captcha_attempt in range(max_captcha_retries):
+            while captcha_attempt < max_captcha_retries:
                 # 取得辨識驗證碼
                 captcha_text = ""
                 captcha_img = current_soup.find('img', id=re.compile(r'Captcha', re.I))
@@ -130,13 +131,13 @@ class CourseEnroller:
                         c_resp = self.session_manager.get(full_url)
                         b64 = base64.b64encode(c_resp.content).decode('ascii')
                         captcha_text = self.captcha_solver.solve_base64(b64)
-                    logger.debug(f"Enrollment captcha attempt {captcha_attempt + 1}: '{captcha_text}'")
+                    logger.debug(f"Enrollment captcha read (attempt {captcha_attempt + 1}): '{captcha_text}'")
                 else:
                     logger.warning("No captcha image on confirmation page")
 
                 if not captcha_text:
-                    logger.warning(f"Captcha attempt {captcha_attempt + 1}: OCR returned empty, skipping")
-                    continue
+                    logger.warning("OCR returned empty, retrying captcha read...")
+                    continue  # 不計入次數，直接重試讀取
 
                 # 建立送出 payload
                 state = self._extract_asp_state(current_soup)
@@ -162,20 +163,21 @@ class CourseEnroller:
                 resp_submit = self.session_manager.post(self.BASE_URL, data=payload_submit, timeout=10)
                 resp_submit.raise_for_status()
                 soup_submit = BeautifulSoup(resp_submit.text, 'html.parser')
-                logger.debug(f"POSTed 送出 button (attempt {captcha_attempt + 1})")
+                captcha_attempt += 1  # 成功送出才計入次數
+                logger.debug(f"POSTed 送出 button (attempt {captcha_attempt})")
 
                 # 檢查結果
                 msg_label = soup_submit.find('span', id=re.compile(r'ProcessMsg'))
                 msg = msg_label.text.strip() if msg_label else ""
 
                 if "成功" in msg or "完成選課" in msg:
-                    logger.info(f"Enrollment SUCCESS for {course_id}: {msg}")
+                    logger.info(f"Enrollment SUCCESS for {course_id}")
                     success = True
                     break
 
                 # 如果返回頁面仍有驗證碼輸入框，表示驗證碼錯誤 -> 重試
                 if soup_submit.find('input', id=re.compile(r'CaptchaTextBox', re.I)):
-                    logger.warning(f"Captcha attempt {captcha_attempt + 1} wrong, retrying with new captcha...")
+                    logger.warning(f"Captcha attempt {captcha_attempt} wrong, retrying with new captcha...")
                     current_soup = soup_submit
                     continue
 
@@ -183,7 +185,8 @@ class CourseEnroller:
                 logger.info(f"Enrollment result for {course_id}")
                 success = "成功" in msg or "完成選課" in msg or "預定加選" in msg
                 break
-            else:
+
+            if not success and captcha_attempt >= max_captcha_retries:
                 logger.error(f"Failed to solve enrollment captcha after {max_captcha_retries} attempts")
 
             return success, msg
