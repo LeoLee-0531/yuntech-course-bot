@@ -16,6 +16,7 @@ class LoginManager:
         self.session_manager = session_manager
         self.captcha_solver = captcha_solver
 
+    def login(self, username, password, max_retries=5) -> bool:
         if self.is_logged_in():
             # 已經登入
             logger.info("Already logged in.")
