@@ -1,0 +1,9 @@
+services:
+  bot:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      # Mount users.json from host (contains credentials — not baked into image)
+      - ./users.json:/app/users.json:ro
+    restart: always
