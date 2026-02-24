@@ -9,13 +9,11 @@ class UserAgent:
         self,
         account: str,
         password: str,
-        line_user_id: str,
         courses: list[str],
         captcha_solver: CaptchaSolver,
     ):
         self.account = account
         self.password = password
-        self.line_user_id = line_user_id
         self.courses = courses
 
         # 每個使用者擁有獨立會話

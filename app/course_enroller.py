@@ -53,141 +53,155 @@ class CourseEnroller:
 
         return soup  # 已在加選頁面
 
+    def _prepare_course_enrollment(self, course_id: str) -> Optional[BeautifulSoup]:
+        """執行查詢→登記→下一步，回傳驗證碼頁面的 soup，失敗時回傳 None。"""
+        soup = self._get_enrollment_page()
+        if not soup:
+            logger.error("Unable to fetch enrollment page")
+            return None
+
+        if not soup.find('input', {'name': '__VIEWSTATE'}):
+            logger.error("Enrollment page missing VIEWSTATE — OAuth may have failed")
+            return None
+
+        # 搜尋課程
+        state = self._extract_asp_state(soup)
+        payload_search = state.copy()
+        payload_search.update({
+            "__EVENTTARGET": "",
+            "__EVENTARGUMENT": "",
+            "ctl00$ContentPlaceHolder1$CurrentSubjTextBox": course_id,
+            "ctl00$ContentPlaceHolder1$QueryButton": "查詢",
+        })
+        resp_search = self.session_manager.post(self.BASE_URL, data=payload_search, timeout=10)
+        resp_search.raise_for_status()
+        soup_search = BeautifulSoup(resp_search.text, 'html.parser')
+
+        # 找到課程勾選框
+        checkbox_search = soup_search.find('input', {'type': 'checkbox',
+                                             'id': re.compile(r'QueryCourseGridView_SelectCheckBox')})
+        if not checkbox_search:
+            logger.error(f"Course {course_id} not found in search results")
+            return None
+        course_checkbox_name = checkbox_search['name']
+
+        # 登記課程
+        state = self._extract_asp_state(soup_search)
+        payload_register = state.copy()
+        payload_register.update({
+            "__EVENTTARGET": "ctl00$ContentPlaceHolder1$RegisterButton",
+            "__EVENTARGUMENT": "",
+            course_checkbox_name: "on",
+        })
+        resp_register = self.session_manager.post(self.BASE_URL, data=payload_register, timeout=10)
+        resp_register.raise_for_status()
+        soup_register = BeautifulSoup(resp_register.text, 'html.parser')
+
+        # 下一步
+        state = self._extract_asp_state(soup_register)
+        payload_next = state.copy()
+        payload_next.update({
+            "__EVENTTARGET": "ctl00$ContentPlaceHolder1$NextStepButton",
+            "__EVENTARGUMENT": "",
+        })
+        resp_next = self.session_manager.post(self.BASE_URL, data=payload_next, timeout=10)
+        resp_next.raise_for_status()
+        soup_next = BeautifulSoup(resp_next.text, 'html.parser')
+        return soup_next
+
     def enroll(self, course_id: str) -> Tuple[bool, str]:
         try:
-            # 取得加選頁面
-            soup = self._get_enrollment_page()
-            if not soup:
-                return False, "無法取得選課頁面"
-
-            if not soup.find('input', {'name': '__VIEWSTATE'}):
-                logger.error("Enrollment page missing VIEWSTATE — OAuth may have failed")
-                return False, "選課頁面未正確載入（缺少 VIEWSTATE）"
-
-            # 搜尋課程
-            state = self._extract_asp_state(soup)
-            payload_search = state.copy()
-            payload_search.update({
-                "__EVENTTARGET": "",
-                "__EVENTARGUMENT": "",
-                "ctl00$ContentPlaceHolder1$CurrentSubjTextBox": course_id,
-                "ctl00$ContentPlaceHolder1$QueryButton": "查詢",
-            })
-            resp_search = self.session_manager.post(self.BASE_URL, data=payload_search, timeout=10)
-            resp_search.raise_for_status()
-            soup_search = BeautifulSoup(resp_search.text, 'html.parser')
-
-            # 在搜尋結果中找到課程勾選框
-            checkbox_search = soup_search.find('input', {'type': 'checkbox',
-                                                 'id': re.compile(r'QueryCourseGridView_SelectCheckBox')})
-            if not checkbox_search:
-                return False, f"課程 {course_id} 未在搜尋結果中找到"
-            course_checkbox_name = checkbox_search['name']
-            logger.debug(f"Found course checkbox: {course_checkbox_name}")
-
-            # 登記課程
-            # 透過 __EVENTTARGET = 'ctl00$ContentPlaceHolder1$RegisterButton' 觸發登記按鈕
-            state = self._extract_asp_state(soup_search)
-            payload_register = state.copy()
-            payload_register.update({
-                "__EVENTTARGET": "ctl00$ContentPlaceHolder1$RegisterButton",
-                "__EVENTARGUMENT": "",
-                course_checkbox_name: "on",  # 勾選課程
-            })
-            resp_register = self.session_manager.post(self.BASE_URL, data=payload_register, timeout=10)
-            resp_register.raise_for_status()
-            soup_register = BeautifulSoup(resp_register.text, 'html.parser')
-            logger.debug("POSTed 登記 button")
-
-            # 下一步
-            state = self._extract_asp_state(soup_register)
-            payload_next = state.copy()
-            payload_next.update({
-                "__EVENTTARGET": "ctl00$ContentPlaceHolder1$NextStepButton",
-                "__EVENTARGUMENT": "",
-            })
-            resp_next = self.session_manager.post(self.BASE_URL, data=payload_next, timeout=10)
-            resp_next.raise_for_status()
-            soup_next = BeautifulSoup(resp_next.text, 'html.parser')
-            logger.debug("POSTed 下一步 button")
-
-            # 重試迴圈：辨識驗證碼（最多重試 5 次，空字串不計入次數）
-            current_soup = soup_next
-            max_captcha_retries = 5
+            max_flow_retries = 3
             msg = "未知結果"
             success = False
-            captcha_attempt = 0  # 實際送出次數
 
-            while captcha_attempt < max_captcha_retries:
-                # 取得辨識驗證碼
-                captcha_text = ""
-                captcha_img = current_soup.find('img', id=re.compile(r'Captcha', re.I))
-                if captcha_img:
-                    src = captcha_img.get('src', '')
-                    if src.startswith('data:image'):
-                        captcha_text = self.captcha_solver.solve_base64(src)
-                    elif src:
-                        full_url = "https://webapp.yuntech.edu.tw" + src if src.startswith('/') else src
-                        c_resp = self.session_manager.get(full_url)
-                        b64 = base64.b64encode(c_resp.content).decode('ascii')
-                        captcha_text = self.captcha_solver.solve_base64(b64)
-                    logger.debug(f"Enrollment captcha read (attempt {captcha_attempt + 1}): '{captcha_text}'")
-                else:
-                    logger.warning("No captcha image on confirmation page")
+            for flow_attempt in range(max_flow_retries):
+                if flow_attempt > 0:
+                    logger.warning(f"Retrying full enrollment flow (attempt {flow_attempt + 1}/{max_flow_retries})...")
 
-                if not captcha_text:
-                    logger.warning("OCR returned empty, retrying captcha read...")
-                    continue  # 不計入次數，直接重試讀取
+                # 取得驗證碼頁面
+                current_soup = self._prepare_course_enrollment(course_id)
+                if not current_soup:
+                    return False, "無法取得選課頁面"
 
-                # 建立送出 payload
-                state = self._extract_asp_state(current_soup)
-                payload_submit = state.copy()
+                # 重試迴圈：辨識驗證碼（最多 5 次，空字串不計入次數）
+                max_captcha_retries = 5
+                captcha_attempt = 0
 
-                captcha_input = current_soup.find('input', id=re.compile(r'CaptchaTextBox', re.I))
-                captcha_name = captcha_input['name'] if captcha_input else "ctl00$ContentPlaceHolder1$CaptchaTextBox"
+                while captcha_attempt < max_captcha_retries:
+                    captcha_text = ""
+                    captcha_img = current_soup.find('img', id=re.compile(r'Captcha', re.I))
+                    if captcha_img:
+                        src = captcha_img.get('src', '')
+                        if src.startswith('data:image'):
+                            captcha_text = self.captcha_solver.solve_base64(src)
+                        elif src:
+                            full_url = "https://webapp.yuntech.edu.tw" + src if src.startswith('/') else src
+                            c_resp = self.session_manager.get(full_url)
+                            b64 = base64.b64encode(c_resp.content).decode('ascii')
+                            captcha_text = self.captcha_solver.solve_base64(b64)
+                        logger.debug(f"Enrollment captcha read (attempt {captcha_attempt + 1}): '{captcha_text}'")
+                    else:
+                        # 頁面上沒有驗證碼，重試整個流程
+                        logger.warning("No captcha image on confirmation page, retrying full flow...")
+                        break
 
-                submit_link = current_soup.find('a', id=re.compile(r'SaveButton|SubmitButton|SendButton', re.I))
-                if submit_link:
-                    href = submit_link.get('href', '')
-                    target_match = re.search(r"__doPostBack\('([^']+)'", href)
-                    submit_eventtarget = target_match.group(1) if target_match else "ctl00$ContentPlaceHolder1$SaveButton"
-                else:
-                    submit_eventtarget = "ctl00$ContentPlaceHolder1$SaveButton"
+                    if not captcha_text:
+                        logger.warning("OCR returned empty, retrying captcha read...")
+                        continue  # 不計入次數
 
-                payload_submit.update({
-                    "__EVENTTARGET": submit_eventtarget,
-                    "__EVENTARGUMENT": "",
-                    captcha_name: captcha_text,
-                })
+                    # 建立送出 payload
+                    state = self._extract_asp_state(current_soup)
+                    payload_submit = state.copy()
 
-                resp_submit = self.session_manager.post(self.BASE_URL, data=payload_submit, timeout=10)
-                resp_submit.raise_for_status()
-                soup_submit = BeautifulSoup(resp_submit.text, 'html.parser')
-                captcha_attempt += 1  # 成功送出才計入次數
-                logger.debug(f"POSTed 送出 button (attempt {captcha_attempt})")
+                    captcha_input = current_soup.find('input', id=re.compile(r'CaptchaTextBox', re.I))
+                    captcha_name = captcha_input['name'] if captcha_input else "ctl00$ContentPlaceHolder1$CaptchaTextBox"
 
-                # 檢查結果
-                msg_label = soup_submit.find('span', id=re.compile(r'ProcessMsg'))
-                msg = msg_label.text.strip() if msg_label else ""
+                    submit_link = current_soup.find('a', id=re.compile(r'SaveButton|SubmitButton|SendButton', re.I))
+                    if submit_link:
+                        href = submit_link.get('href', '')
+                        target_match = re.search(r"__doPostBack\('([^']+)'", href)
+                        submit_eventtarget = target_match.group(1) if target_match else "ctl00$ContentPlaceHolder1$SaveButton"
+                    else:
+                        submit_eventtarget = "ctl00$ContentPlaceHolder1$SaveButton"
 
-                if "成功" in msg or "完成選課" in msg:
-                    logger.info(f"Enrollment SUCCESS for {course_id}")
-                    success = True
+                    payload_submit.update({
+                        "__EVENTTARGET": submit_eventtarget,
+                        "__EVENTARGUMENT": "",
+                        captcha_name: captcha_text,
+                    })
+
+                    resp_submit = self.session_manager.post(self.BASE_URL, data=payload_submit, timeout=10)
+                    resp_submit.raise_for_status()
+                    soup_submit = BeautifulSoup(resp_submit.text, 'html.parser')
+                    captcha_attempt += 1
+                    logger.debug(f"POSTed 送出 button (attempt {captcha_attempt})")
+
+                    # 檢查結果
+                    msg_label = soup_submit.find('span', id=re.compile(r'ProcessMsg'))
+                    msg = msg_label.text.strip() if msg_label else ""
+
+                    if "成功" in msg or "完成選課" in msg:
+                        logger.info(f"Enrollment SUCCESS for {course_id}")
+                        success = True
+                        break
+
+                    # 如果返回頁面仍有驗證碼輸入框，表示驗證碼錯誤 -> 重試
+                    if soup_submit.find('input', id=re.compile(r'CaptchaTextBox', re.I)):
+                        logger.warning(f"Captcha attempt {captcha_attempt} wrong, retrying with new captcha...")
+                        current_soup = soup_submit
+                        continue
+
+                    # 沒有驗證碼輸入框 -> 最終結果頁面
+                    logger.info(f"Enrollment result for {course_id}")
+                    success = "成功" in msg or "完成選課" in msg or "預定加選" in msg
                     break
 
-                # 如果返回頁面仍有驗證碼輸入框，表示驗證碼錯誤 -> 重試
-                if soup_submit.find('input', id=re.compile(r'CaptchaTextBox', re.I)):
-                    logger.warning(f"Captcha attempt {captcha_attempt} wrong, retrying with new captcha...")
-                    current_soup = soup_submit
-                    continue
-
-                # 沒有驗證碼輸入框 -> 進入最終結果頁面
-                logger.info(f"Enrollment result for {course_id}")
-                success = "成功" in msg or "完成選課" in msg or "預定加選" in msg
-                break
-
-            if not success and captcha_attempt >= max_captcha_retries:
-                logger.error(f"Failed to solve enrollment captcha after {max_captcha_retries} attempts")
+                if success:
+                    break
+                if captcha_attempt >= max_captcha_retries:
+                    logger.error(f"Failed to solve enrollment captcha after {max_captcha_retries} attempts")
+                    break
 
             return success, msg
 

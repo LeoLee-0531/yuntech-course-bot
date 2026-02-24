@@ -50,7 +50,6 @@ def load_config():
             UserAgent(
                 account=u["account"],
                 password=u["password"],
-                line_user_id=u["line_user_id"],
                 courses=u["courses"],
                 captcha_solver=captcha_solver,
             )
@@ -97,8 +96,8 @@ def job():
             else:
                 # 課程已滿 - 重設通知狀態
                 for ua in user_agents:
-                    if course_id in ua.courses and state.is_already_notified(course_id, ua.line_user_id):
-                        state.unmark_notified(course_id, ua.line_user_id)
+                    if course_id in ua.courses and state.is_already_notified(course_id, ua.account):
+                        state.unmark_notified(course_id, ua.account)
         except Exception as e:
             logger.error(f"Error scraping {course_id}: {e}")
             state.increment_error()
@@ -118,7 +117,7 @@ def job():
     for ua in user_agents:
         user_available = [
             cid for cid in ua.courses
-            if cid in available_courses and not state.is_already_notified(cid, ua.line_user_id)
+            if cid in available_courses and not state.is_already_notified(cid, ua.account)
         ]
         if not user_available:
             continue
@@ -132,7 +131,7 @@ def job():
             enrolled, limit, name = available_courses[course_id]
             enroll_msg = ""
 
-            logger.info(f"[{ua.account}] 正在嘗試自動加選 {course_id}...")
+            logger.info(f"[{ua.account}] 正在嘗試加選 {course_id}...")
             success, reason = ua.enroller.enroll(course_id)
 
             if success:
@@ -141,14 +140,15 @@ def job():
                     f"🎉 選課成功！\n"
                     f"課程：{name} ({course_id})"
                 )
-                notifier.send_message(msg, mention_user_ids=[ua.line_user_id])
-                state.mark_notified(course_id, ua.line_user_id)
+                notifier.send_message(msg)
+                state.mark_notified(course_id, ua.account)
             else:
                 logger.error(f"[{ua.account}] {course_id} 加選失敗: {reason}")
 
 
 if __name__ == "__main__":
     schedule.every(INTERVAL).seconds.do(job)
+    logger.info(f"Course Bot started, target courses: {all_target_courses}")
 
     # 啟動時執行一次
     job()

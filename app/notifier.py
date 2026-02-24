@@ -8,67 +8,14 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 class BaseNotifier:
-    def send_message(self, text: str, mention_user_ids: list = None):
+    def send_message(self, text: str):
         pass
-
-class LineNotifier(BaseNotifier):
-    def __init__(self):
-        self.token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-        self.group_id = os.getenv("LINE_GROUP_ID")
-        self.api_url = "https://api.line.me/v2/bot/message/push"
-
-    def send_message(self, text: str, mention_user_ids: list = None):
-        if not self.token or not self.group_id:
-            return
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.token}"
-        }
-        
-        message_obj = {
-            "type": "textV2",
-            "text": text
-        }
-        
-        if mention_user_ids:
-            mention_str = ""
-            substitution = {}
-            
-            for index, uid in enumerate(mention_user_ids):
-                placeholder = f"user{index}"
-                substitution[placeholder] = {
-                    "type": "mention",
-                    "mentionee": {
-                        "type": "user",
-                        "userId": uid
-                    }
-                }
-                mention_str += f"{{{placeholder}}} "
-                
-            # 將標記佔位符放在訊息開頭
-            message_obj["text"] = f"{mention_str}\n{text}"
-            message_obj["substitution"] = substitution
-
-        payload = {
-            "to": self.group_id,
-            "messages": [message_obj]
-        }
-        
-        try:
-            response = requests.post(self.api_url, headers=headers, json=payload, timeout=10)
-            response.raise_for_status()
-            logger.info("LINE notification sent successfully")
-        except Exception as e:
-            logger.error(f"Failed to send LINE notification: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"Details: {e.response.text}")
 
 class DiscordNotifier(BaseNotifier):
     def __init__(self):
         self.webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
 
-    def send_message(self, text: str, mention_user_ids: list = None):
+    def send_message(self, text: str):
         if not self.webhook_url:
             return
 
@@ -79,16 +26,17 @@ class DiscordNotifier(BaseNotifier):
         try:
             response = requests.post(self.webhook_url, json=payload, timeout=10)
             response.raise_for_status()
-            logger.info("Discord notification sent successfully")
+            logger.info("Notification sent successfully")
         except Exception as e:
-            logger.error(f"Failed to send Discord notification: {e}")
+            logger.error(f"Failed to send notification: {e}")
             if hasattr(e, 'response') and e.response is not None:
                 logger.error(f"Details: {e.response.text}")
 
 class NotificationManager:
     def __init__(self):
-        self.notifiers = [LineNotifier(), DiscordNotifier()]
+        self.notifier = DiscordNotifier()
         
-    def send_message(self, text: str, mention_user_ids: list = None):
-        for notifier in self.notifiers:
-            notifier.send_message(text, mention_user_ids)
+    def send_message(self, text: str):
+        self.notifier.send_message(text)
+            
+
