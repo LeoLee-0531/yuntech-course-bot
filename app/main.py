@@ -13,6 +13,15 @@ from app.user_agent import UserAgent
 import logging
 
 # 設定日誌
+SUCCESS = 25
+logging.addLevelName(SUCCESS, "SUCCESS")
+
+def log_success(self, message, *args, **kwargs):
+    if self.isEnabledFor(SUCCESS):
+        self._log(SUCCESS, message, args, **kwargs)
+
+logging.Logger.success = log_success
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -142,7 +151,7 @@ def job():
 
             if success:
                 enrolled, limit, name = available_courses[course_id]
-                logger.info(f"[{ua.account}] 成功加選 {course_id}")
+                logger.success(f"[{ua.account}] 成功加選 {course_id}")
                 msg = (
                     f"🎉 選課成功！\n"
                     f"課程：{name} ({course_id})"
