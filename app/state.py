@@ -24,7 +24,7 @@ class State:
             return False
         if datetime.datetime.now() < self.silence_until:
             return True
-        # Silence period passed
+        # 靜默期已過
         self.silence_until = None
         return False
 

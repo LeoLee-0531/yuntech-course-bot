@@ -4,6 +4,6 @@ services:
     env_file:
       - .env
     volumes:
-      # Mount users.json from host (contains credentials — not baked into image)
+      # 掛載 users.json (包含帳密資訊)
       - ./users.json:/app/users.json:ro
     restart: always

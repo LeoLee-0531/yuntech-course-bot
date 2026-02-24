@@ -5,20 +5,12 @@ import easyocr
 
 class CaptchaSolver:
     def __init__(self):
-        # We only need English alphanumeric characters for the CAPTCHA
-        # verbose=False suppresses EasyOCR startup logs
+        # CAPTCHA 只需要英文與數字
+        # verbose=False 隱藏 EasyOCR 啟動日誌
         self.reader = easyocr.Reader(['en'], verbose=False)
 
     def solve_base64(self, base64_str: str) -> str:
-        """
-        Takes a base64 encoded image string (or data-URI), decodes it,
-        and reads the text using EasyOCR.
-
-        Strategy: concatenate ALL recognized text fragments (alphanumeric only)
-        and return the first 4 characters. This handles small captcha images
-        where OCR splits one 4-char code into multiple fragments
-        (e.g. AAXCCS 30x130px captcha: '628 34R' -> '62834R' -> take '6283').
-        """
+        # 接收 base64 編碼的圖片字串，解碼後使用 EasyOCR 辨識。
         if "," in base64_str:
             base64_str = base64_str.split(",")[1]
 
@@ -28,13 +20,13 @@ class CaptchaSolver:
 
         results = self.reader.readtext(img)
 
-        # Concatenate all alphanumeric chars from all fragments
+        # 串接所有片段中的英數字元
         all_chars = ''.join(
             c for (_, text, _) in results
             for c in text if c.isalnum()
         )
 
-        # Return only the first 4 characters (the captcha is always 4 chars)
+        # 回傳前 4 碼（驗證碼固定為 4 碼）
         if len(all_chars) >= 4:
             return all_chars[:4]
         return ""

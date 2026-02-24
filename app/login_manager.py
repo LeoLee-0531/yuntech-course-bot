@@ -24,18 +24,19 @@ class LoginManager:
 
         for attempt in range(max_retries):
             try:
-                # 1. GET Login Page to extract token
+                # 取得登入頁面
                 resp = self.session_manager.get(self.LOGIN_URL, timeout=10)
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
+                # 提取 token
                 token_input = soup.find('input', {'name': '__RequestVerificationToken'})
                 if not token_input:
                     logger.error("Could not find __RequestVerificationToken on login page.")
                     continue
                 token = token_input['value']
 
-                # 2. Extract and solve Captcha (with internal retries to get exactly 4 chars)
+                # 取得驗證碼
                 captcha_text, captcha_b64 = self._get_and_solve_captcha_with_retries(retries=5)
                 
 
@@ -45,7 +46,7 @@ class LoginManager:
 
                 logger.debug(f"Attempting login with token: {token[:10]}... and captcha: {captcha_text}")
 
-                # 3. POST Login - exactly like the reference project, minimal payload
+                # 登入
                 payload = {
                     '__RequestVerificationToken': token,
                     'pLoginName': username,
@@ -57,9 +58,7 @@ class LoginManager:
                 post_resp = self.session_manager.post(self.LOGIN_URL, data=payload, timeout=10)
                 post_resp.raise_for_status()
                 
-                # logger.debug(f"Login POST response: {post_resp.text[:500]}...") # Uncomment to see full HTML
-                
-                # 4. Verify login status
+                # 驗證登入狀態
                 if self.is_logged_in():
                     logger.info("Successfully logged in.")
                     return True
@@ -76,7 +75,7 @@ class LoginManager:
             try:
                 resp = self.session_manager.get(self.CAPTCHA_URL, timeout=5)
                 resp.raise_for_status()
-                # The response body represents the base64 string directly
+                # 回應內容直接就是 base64 字串
                 b64 = resp.text.strip().strip('"') 
                 
                 text = self.captcha_solver.solve_base64(b64)

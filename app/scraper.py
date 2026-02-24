@@ -15,15 +15,12 @@ class CourseScraper:
             self.session.headers.update({
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             })
-            # Disable SSL warning for the target server with non-standard certificate
+            # 針對不正常證書的目標伺服器禁用 SSL 警告
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             self.session.verify = False
 
     def get_course_info(self, course_id: str) -> Tuple[int, int, str]:
-        """
-        Returns (enrolled_count, capacity_limit, course_name)
-        """
-        # Step 1: GET to get tokens
+        # 取得 tokens
         response = self.session.get(self.BASE_URL, timeout=10)
         response.raise_for_status()
         
@@ -35,11 +32,11 @@ class CourseScraper:
         acad_seme_elem = soup.find('select', {'id': 'ctl00_MainContent_AcadSeme'}).find('option', selected=True)
         acad_seme = acad_seme_elem['value'] if acad_seme_elem else ""
         
-        # Extract hidden toolkit script manager field
+        # 取得隱藏的 toolkit script manager 欄位
         toolkit_hidden = soup.find('input', {'id': 'ctl00_MainContent_ToolkitScriptManager1_HiddenField'})
         toolkit_value = toolkit_hidden['value'] if toolkit_hidden else ''
         
-        # Step 2: POST to query course
+        # 查詢課程
         payload = {
             "__LASTFOCUS": "",
             "__EVENTTARGET": "",
@@ -64,12 +61,10 @@ class CourseScraper:
         response = self.session.post(self.BASE_URL, data=payload, timeout=10)
         response.raise_for_status()
         
-        # Step 3: Parse result
+        # 解析結果
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # The result table ID from reference: ctl00_MainContent_Course_GridView
-        # Current app was using: ctl00_MainContent_GridView1
-        # Let's try both or prioritize the one from the reference
+        # 搜尋不同 ID 的課程表格
         grid = soup.find('table', {'id': 'ctl00_MainContent_Course_GridView'})
         if not grid:
             grid = soup.find('table', {'id': 'ctl00_MainContent_GridView1'})
@@ -77,27 +72,24 @@ class CourseScraper:
         if not grid:
             raise Exception(f"Course {course_id} not found: The course grid was not rendered.")
             
-        rows = grid.find_all('tr')[1:] # Skip header
+        rows = grid.find_all('tr')[1:] # 略過標題列
         for row in rows:
-            if 'PageBar' in str(row): # Skip pagination rows
+            if 'PageBar' in str(row): # 略過分頁列
                 continue
                 
             cols = row.find_all('td')
             if len(cols) < 11: continue
             
-            # Reference uses index 0 for course_id link text
+            # 參考資料使用索引 0 作為課程 ID 連結文字
             row_course_id_elem = cols[0].find('a')
             if not row_course_id_elem:
-                # Fallback to older index 1 if needed
+                # 如果需要，回退到舊的索引 1
                 row_course_id = cols[1].text.strip()
             else:
                 row_course_id = row_course_id_elem.text.strip()
 
             if row_course_id == course_id:
-                # Based on reference:
-                # Name at index 2 (link)
-                # Enrolled at index 9 (span)
-                # Limit at index 10 (span)
+                # 名稱 (index 2), 已選人數 (index 9), 人數限制 (index 10)
                 
                 course_name_elem = cols[2].find('a')
                 course_name = course_name_elem.text.strip() if course_name_elem else "未知課程"
@@ -109,7 +101,7 @@ class CourseScraper:
                 limit_elem = cols[10].find('span')
                 limit_text = limit_elem.text.strip() if limit_elem else "0"
                 
-                # Use regex for limit parsing as in reference
+                # 解析人數限制
                 limit_match = re.search(r'(\d+)', limit_text)
                 limit = int(limit_match.group(1)) if limit_match else 0
                 

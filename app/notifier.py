@@ -1,6 +1,9 @@
 import requests
 import os
 from dotenv import load_dotenv
+import logging
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -12,7 +15,7 @@ class LineNotifier:
 
     def send_message(self, text: str, mention_user_ids: list = None):
         if not self.token or not self.group_id:
-            print(f"[Mock Notification to Group] {text} (mentions: {mention_user_ids})")
+            logger.info(f"send message: {text}")
             return
 
         headers = {
@@ -40,7 +43,7 @@ class LineNotifier:
                 }
                 mention_str += f"{{{placeholder}}} "
                 
-            # Put the mention placeholders right before the actual message
+            # 將標記佔位符放在訊息開頭
             message_obj["text"] = f"{mention_str}\n{text}"
             message_obj["substitution"] = substitution
 
@@ -53,7 +56,7 @@ class LineNotifier:
             response = requests.post(self.api_url, headers=headers, json=payload, timeout=10)
             response.raise_for_status()
         except Exception as e:
-            print(f"Failed to send LINE notification: {e}")
+            print(f"Failed to send notification: {e}")
             if hasattr(e, 'response') and e.response is not None:
                 print(f"Details: {e.response.text}")
             raise

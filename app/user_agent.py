@@ -5,15 +5,6 @@ from app.course_enroller import CourseEnroller
 
 
 class UserAgent:
-    """
-    One UserAgent per YunTech account.
-
-    Each agent keeps its own HTTP session (cookies) so that multiple users can
-    be logged in simultaneously without interfering with each other.
-    A single shared CaptchaSolver is injected to avoid reloading the EasyOCR
-    model multiple times (the model is large and expensive to initialise).
-    """
-
     def __init__(
         self,
         account: str,
@@ -27,13 +18,12 @@ class UserAgent:
         self.line_user_id = line_user_id
         self.courses = courses
 
-        # Independent session per user
+        # 每個使用者擁有獨立會話
         self.session = SessionManager()
         self.login_mgr = LoginManager(self.session, captcha_solver)
         self.enroller = CourseEnroller(self.session, captcha_solver)
 
     def ensure_logged_in(self) -> bool:
-        """Log in if not already logged in. Returns True on success."""
         if self.login_mgr.is_logged_in():
             return True
         return self.login_mgr.login(self.account, self.password)
