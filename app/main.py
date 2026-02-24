@@ -82,16 +82,18 @@ def job():
     # 重新載入設定
     load_config()
 
-    if state.is_silenced():
-        return
-
-   # 檢查課程名額（共享會話，不需登入）
+    # 檢查課程名額（共享會話，不需登入）
     available_courses: dict[str, tuple[int, int, str]] = {}
 
     for course_id in all_target_courses:
+        # 若該課程仍在退避靜默期就跳過
+        if state.is_course_silenced(course_id):
+            logger.debug(f"[{course_id}] 仍在靜默期，略過")
+            continue
+
         try:
             enrolled, limit, name = scraper.get_course_info(course_id)
-            state.reset_error()
+            state.reset_error(course_id)
             if enrolled < limit:
                 available_courses[course_id] = (enrolled, limit, name)
             else:
@@ -101,15 +103,18 @@ def job():
                         state.unmark_notified(course_id, ua.account)
         except Exception as e:
             logger.error(f"Error scraping {course_id}: {e}")
-            state.increment_error()
-            if state.error_count >= 3:
-                error_msg = f"⚠️ 系統異常通知\n連續抓取失敗 3 次，系統將靜默 3 小時。\n錯誤訊息：{str(e)}"
+            state.increment_error(course_id)
+            error_count = state.get_error_count(course_id)
+            if error_count >= 3:
+                error_msg = (
+                    f"⚠️ 課程 {course_id} 連續抓取失敗 {error_count} 次，\n"
+                    f"已進入退避靜默。\n錯誤訊息：{str(e)}"
+                )
                 try:
                     notifier.send_message(error_msg)
                 except Exception:
                     pass
-                state.set_silence()
-            return
+            continue  # 其他課程繼續正常檢查
 
     if not available_courses:
         return
@@ -148,6 +153,7 @@ def job():
 
 
 if __name__ == "__main__":
+    # 設定排程
     schedule.every(INTERVAL).seconds.do(job)
     logger.info(f"Course Bot started, target courses: {all_target_courses}")
 
@@ -155,5 +161,6 @@ if __name__ == "__main__":
     job()
 
     while True:
+        # 執行待處理的排程任務
         schedule.run_pending()
         time.sleep(1)
