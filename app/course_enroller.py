@@ -124,9 +124,11 @@ class CourseEnroller:
                 if not current_soup:
                     return False, "無法取得選課頁面"
 
-                # 重試迴圈：辨識驗證碼（最多 5 次，空字串不計入次數）
+                # 重試迴圈：辨識驗證碼（最多 5 次）
                 max_captcha_retries = 5
+                max_empty_ocr = 10  # OCR 連續空字串上限
                 captcha_attempt = 0
+                empty_ocr_count = 0
 
                 while captcha_attempt < max_captcha_retries:
                     captcha_text = ""
@@ -142,13 +144,32 @@ class CourseEnroller:
                             captcha_text = self.captcha_solver.solve_base64(b64)
                         logger.debug(f"Enrollment captcha read (attempt {captcha_attempt + 1}): '{captcha_text}'")
                     else:
-                        # 頁面上沒有驗證碼，重試整個流程
-                        logger.warning("No captcha image on confirmation page, retrying full flow...")
+                        # 頁面上沒有驗證碼圖片就讀取頁面訊息
+                        # 有明確訊息就直接回傳，不重試
+                        fallback_label = current_soup.find('span', id=re.compile(r'ProcessMsg'))
+                        if fallback_label and fallback_label.text.strip():
+                            msg = fallback_label.text.strip()
+                            logger.debug(f"No captcha image, page message: {msg}")
+                            return False, msg
+                        else:
+                            msg = "頁面異常，無法取得驗證碼（可能已加選或 session 過期）"
+                            logger.warning(msg)
                         break
 
                     if not captcha_text:
-                        logger.warning("OCR returned empty, retrying captcha read...")
-                        continue  # 不計入次數
+                        empty_ocr_count += 1
+                        if empty_ocr_count >= max_empty_ocr:
+                            msg = "驗證碼辨識失敗（OCR 連續回傳空字串）"
+                            logger.warning(msg)
+                            break
+                        logger.warning(f"OCR returned empty ({empty_ocr_count}/{max_empty_ocr}), re-fetching captcha...")
+                        # URL 型驗證碼下一輪迴圈就會重新 fetch
+                        # data:image 型需重新取得確認頁面才能拿到新圖
+                        if src.startswith('data:image'):
+                            current_soup = self._prepare_course_enrollment(course_id)
+                            if not current_soup:
+                                break
+                        continue
 
                     # 建立送出 payload
                     state = self._extract_asp_state(current_soup)
@@ -193,14 +214,15 @@ class CourseEnroller:
                         continue
 
                     # 沒有驗證碼輸入框 -> 最終結果頁面
-                    logger.info(f"Enrollment result for {course_id}")
-                    success = "成功" in msg or "完成選課" in msg or "預定加選" in msg
+                    logger.info(f"Enrollment result for {course_id}: {msg or '（無訊息）'}")
+                    success = "成功" in msg or "完成選課" in     msg or "預定加選" in msg
                     break
 
                 if success:
                     break
                 if captcha_attempt >= max_captcha_retries:
-                    logger.error(f"Failed to solve enrollment captcha after {max_captcha_retries} attempts")
+                    msg = f"驗證碼連續錯誤 {max_captcha_retries} 次"
+                    logger.error(msg)
                     break
 
             return success, msg
