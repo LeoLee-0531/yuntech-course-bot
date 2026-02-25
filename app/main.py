@@ -4,9 +4,10 @@ import time
 import schedule
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
+import requests.exceptions
 from app.scraper import CourseScraper
 from app.notifier import NotificationManager
-from app.state import State, SILENCE_THRESHOLD
+from app.state import State, SILENCE_THRESHOLD, TIMEOUT_SILENCE_THRESHOLD
 from app.captcha_solver import CaptchaSolver
 from app.user_agent import UserAgent
 
@@ -39,15 +40,19 @@ captcha_solver = CaptchaSolver()
 # 動態更新的設定
 user_agents: list[UserAgent] = []
 all_target_courses: list[str] = []
+_last_users_json_mtime: float = 0.0
 
 
 def load_config():
     """重新載入 users.json 並更新全域狀態"""
-    global user_agents, all_target_courses
+    global user_agents, all_target_courses, _last_users_json_mtime
     
     USERS_JSON_PATH = os.getenv("USERS_JSON", "users.json")
     
     try:
+        mtime = os.path.getmtime(USERS_JSON_PATH)
+        changed = mtime != _last_users_json_mtime
+
         with open(USERS_JSON_PATH, encoding="utf-8") as f:
             users_config = json.load(f)
             
@@ -72,6 +77,11 @@ def load_config():
         # 更新全域變數
         user_agents = new_user_agents
         all_target_courses = new_all_target_courses
+        _last_users_json_mtime = mtime
+
+        if changed:
+            accounts = [u["account"] for u in users_config]
+            logger.info(f"🔄 {USERS_JSON_PATH} 已更新，載入 {len(accounts)} 位使用者：{accounts}，監控課程：{new_all_target_courses}")
         
     except Exception as e:
         logger.error(f"❌ Failed to reload {USERS_JSON_PATH}: {e}")
@@ -140,17 +150,20 @@ def job():
                         if course_id in ua.courses and state.is_already_notified(course_id, ua.account):
                             state.unmark_notified(course_id, ua.account)
             except Exception as e:
+                is_timeout = isinstance(e, (requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout))
                 logger.error(f"Error scraping {course_id}: {e}")
-                state.increment_error(course_id)
+                state.increment_error(course_id, is_timeout=is_timeout)
                 error_count = state.get_error_count(course_id)
-                if error_count >= SILENCE_THRESHOLD:
+                threshold = TIMEOUT_SILENCE_THRESHOLD if is_timeout else SILENCE_THRESHOLD
+                if error_count >= threshold:
                     silence_until = state.get_silence_until(course_id)
                     silence_info = (
                         f"\n靜默至：{silence_until.strftime('%H:%M:%S')}"
                         if silence_until else ""
                     )
+                    kind = "Timeout" if is_timeout else "抓取失敗"
                     error_msg = (
-                        f"⚠️ 課程 {course_id} 連續抓取失敗 {error_count} 次，\n"
+                        f"⚠️ 課程 {course_id} 連續{kind} {error_count} 次，\n"
                         f"已進入退避靜默。{silence_info}\n錯誤訊息：{str(e)}"
                     )
                     try:
@@ -208,7 +221,7 @@ def job():
 if __name__ == "__main__":
     # 設定排程
     schedule.every(INTERVAL).seconds.do(job)
-    logger.info(f"Course Bot started, target courses: {all_target_courses}")
+    logger.info(f"Course Bot started")
 
     # 啟動時執行一次
     job()

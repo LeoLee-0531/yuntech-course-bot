@@ -4,8 +4,10 @@ from typing import Dict, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-# 錯誤次數：靜默分鐘（從第 3 次才開始靜默）
+# 一般錯誤連續次數門檻（未知錯誤、解析失敗等）
 SILENCE_THRESHOLD = 3
+# Timeout 專用門檻（偶發網路逾時容忍度更高）
+TIMEOUT_SILENCE_THRESHOLD = 6
 BACKOFF_SCHEDULE = {
     3: 1,
     4: 3,
@@ -26,19 +28,21 @@ class State:
         # 已通知的名單
         self.notified_courses: Set[Tuple[str, str]] = set()
 
-    def increment_error(self, course_id: str):
+    def increment_error(self, course_id: str, is_timeout: bool = False):
         # 增加錯誤次數
         self._course_errors[course_id] = self._course_errors.get(course_id, 0) + 1
         count = self._course_errors[course_id]
 
-        if count < SILENCE_THRESHOLD:
+        threshold = TIMEOUT_SILENCE_THRESHOLD if is_timeout else SILENCE_THRESHOLD
+        if count < threshold:
             pass  # 不到靜默門檻，靜默不紀錄
         else:
             minutes = BACKOFF_SCHEDULE.get(count, BACKOFF_MAX_MINUTES)
             silence_until = datetime.datetime.now() + datetime.timedelta(minutes=minutes)
             self._course_silence[course_id] = silence_until
+            kind = "Timeout" if is_timeout else "錯誤"
             logger.warning(
-                f"[{course_id}] 連續錯誤 {count} 次，將靜默 {minutes} 分鐘（至 {silence_until.strftime('%H:%M:%S')}）"
+                f"[{course_id}] 連續{kind} {count} 次，將靜默 {minutes} 分鐘（至 {silence_until.strftime('%H:%M:%S')}）"
             )
 
     def reset_error(self, course_id: str):
