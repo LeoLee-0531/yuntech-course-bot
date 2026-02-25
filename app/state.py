@@ -32,9 +32,7 @@ class State:
         count = self._course_errors[course_id]
 
         if count < SILENCE_THRESHOLD:
-            logger.warning(
-                f"[{course_id}] 連續錯誤 {count} 次（還需 {SILENCE_THRESHOLD - count} 次才靜默）"
-            )
+            pass  # 不到靜默門檻，靜默不紀錄
         else:
             minutes = BACKOFF_SCHEDULE.get(count, BACKOFF_MAX_MINUTES)
             silence_until = datetime.datetime.now() + datetime.timedelta(minutes=minutes)

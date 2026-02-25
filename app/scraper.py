@@ -21,7 +21,7 @@ class CourseScraper:
 
     def get_course_info(self, course_id: str) -> Tuple[int, int, str]:
         # 取得 tokens
-        response = self.session.get(self.BASE_URL, timeout=10)
+        response = self.session.get(self.BASE_URL, timeout=30)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -58,7 +58,7 @@ class CourseScraper:
             "ctl00$MainContent$Submit": "執行查詢"
         }
         
-        response = self.session.post(self.BASE_URL, data=payload, timeout=10)
+        response = self.session.post(self.BASE_URL, data=payload, timeout=30)
         response.raise_for_status()
         
         # 解析結果

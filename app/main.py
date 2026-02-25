@@ -2,11 +2,11 @@ import json
 import os
 import time
 import schedule
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 from app.scraper import CourseScraper
 from app.notifier import NotificationManager
-from app.state import State
-from app.api_client import SessionManager
+from app.state import State, SILENCE_THRESHOLD
 from app.captcha_solver import CaptchaSolver
 from app.user_agent import UserAgent
 
@@ -23,7 +23,7 @@ def log_success(self, message, *args, **kwargs):
 logging.Logger.success = log_success
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -77,53 +77,81 @@ def load_config():
         logger.error(f"❌ Failed to reload {USERS_JSON_PATH}: {e}")
 
 
-# 使用共享會話的抓取器（不需登入）
-scraper_session = SessionManager()
-scraper = CourseScraper(scraper_session)
 notifier = NotificationManager()
 state = State()
 
+# 每個課程設定一個 CourseScraper（持久化 Session，支援 keep-alive）
+_course_scrapers: dict[str, CourseScraper] = {}
+
+def _get_scraper(course_id: str) -> CourseScraper:
+    if course_id not in _course_scrapers:
+        _course_scrapers[course_id] = CourseScraper()
+    return _course_scrapers[course_id]
+
 # 初始載入
 load_config()
+
+
+def _scrape_course(course_id: str):
+    # 使用該課程的持久化 Session 抓取資料（keep-alive，避免每次重新握手）
+    scraper = _get_scraper(course_id)
+    t0 = time.monotonic()
+
+    # 若請求失敗，自動丟棄損壞的 Session，下次將重建。
+    try:
+        result = scraper.get_course_info(course_id)
+        elapsed = time.monotonic() - t0
+        logger.debug(f"[{course_id}] 抓取完成，耗時 {elapsed:.1f}s")
+        return course_id, result
+    except Exception:
+        elapsed = time.monotonic() - t0
+        logger.debug(f"[{course_id}] 抓取失敗，耗時 {elapsed:.1f}s")
+        _course_scrapers.pop(course_id, None)
+        raise
 
 
 def job():
     # 重新載入設定
     load_config()
 
-    # 檢查課程名額（共享會話，不需登入）
+    # 過濾掉靜默期的課程
+    courses_to_check = [
+        cid for cid in all_target_courses
+        if not state.is_course_silenced(cid)
+    ]
+    silenced = set(all_target_courses) - set(courses_to_check)
+    for cid in silenced:
+        logger.debug(f"[{cid}] 仍在靜默期，略過")
+
+    # 並行抓取所有課程名額
     available_courses: dict[str, tuple[int, int, str]] = {}
-
-    for course_id in all_target_courses:
-        # 若該課程仍在退避靜默期就跳過
-        if state.is_course_silenced(course_id):
-            logger.debug(f"[{course_id}] 仍在靜默期，略過")
-            continue
-
-        try:
-            enrolled, limit, name = scraper.get_course_info(course_id)
-            state.reset_error(course_id)
-            if enrolled < limit:
-                available_courses[course_id] = (enrolled, limit, name)
-            else:
-                # 課程已滿 - 重設通知狀態
-                for ua in user_agents:
-                    if course_id in ua.courses and state.is_already_notified(course_id, ua.account):
-                        state.unmark_notified(course_id, ua.account)
-        except Exception as e:
-            logger.error(f"Error scraping {course_id}: {e}")
-            state.increment_error(course_id)
-            error_count = state.get_error_count(course_id)
-            if error_count >= 3:
-                error_msg = (
-                    f"⚠️ 課程 {course_id} 連續抓取失敗 {error_count} 次，\n"
-                    f"已進入退避靜默。\n錯誤訊息：{str(e)}"
-                )
-                try:
-                    notifier.send_message(error_msg)
-                except Exception:
-                    pass
-            continue  # 其他課程繼續正常檢查
+    with ThreadPoolExecutor(max_workers=len(courses_to_check) or 1) as executor:
+        futures = {executor.submit(_scrape_course, cid): cid for cid in courses_to_check}
+        for future in as_completed(futures):
+            course_id = futures[future]
+            try:
+                _, (enrolled, limit, name) = future.result()
+                state.reset_error(course_id)
+                if enrolled < limit:
+                    available_courses[course_id] = (enrolled, limit, name)
+                else:
+                    # 課程已滿 - 重設通知狀態
+                    for ua in user_agents:
+                        if course_id in ua.courses and state.is_already_notified(course_id, ua.account):
+                            state.unmark_notified(course_id, ua.account)
+            except Exception as e:
+                logger.error(f"Error scraping {course_id}: {e}")
+                state.increment_error(course_id)
+                error_count = state.get_error_count(course_id)
+                if error_count >= SILENCE_THRESHOLD:
+                    error_msg = (
+                        f"⚠️ 課程 {course_id} 連續抓取失敗 {error_count} 次，\n"
+                        f"已進入退避靜默。\n錯誤訊息：{str(e)}"
+                    )
+                    try:
+                        notifier.send_message(error_msg)
+                    except Exception:
+                        pass
 
     if not available_courses:
         return
