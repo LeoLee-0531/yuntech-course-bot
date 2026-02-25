@@ -26,10 +26,25 @@ class CourseScraper:
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        viewstate = soup.find('input', {'name': '__VIEWSTATE'})['value']
-        viewstate_gen = soup.find('input', {'name': '__VIEWSTATEGENERATOR'})['value']
-        event_validation = soup.find('input', {'name': '__EVENTVALIDATION'})['value']
-        acad_seme_elem = soup.find('select', {'id': 'ctl00_MainContent_AcadSeme'}).find('option', selected=True)
+        # 驗證必要的表單欄位是否存在（頁面不完整時提早失敗）
+        viewstate_elem = soup.find('input', {'name': '__VIEWSTATE'})
+        viewstate_gen_elem = soup.find('input', {'name': '__VIEWSTATEGENERATOR'})
+        event_validation_elem = soup.find('input', {'name': '__EVENTVALIDATION'})
+        acad_seme_select = soup.find('select', {'id': 'ctl00_MainContent_AcadSeme'})
+        
+        if not viewstate_elem or not viewstate_gen_elem or not event_validation_elem or not acad_seme_select:
+            missing = [name for name, elem in [
+                ('__VIEWSTATE', viewstate_elem),
+                ('__VIEWSTATEGENERATOR', viewstate_gen_elem),
+                ('__EVENTVALIDATION', event_validation_elem),
+                ('AcadSeme', acad_seme_select),
+            ] if not elem]
+            raise Exception(f"Course page did not render correctly (missing: {', '.join(missing)})")
+        
+        viewstate = viewstate_elem['value']
+        viewstate_gen = viewstate_gen_elem['value']
+        event_validation = event_validation_elem['value']
+        acad_seme_elem = acad_seme_select.find('option', selected=True)
         acad_seme = acad_seme_elem['value'] if acad_seme_elem else ""
         
         # 取得隱藏的 toolkit script manager 欄位
