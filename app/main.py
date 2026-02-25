@@ -144,9 +144,14 @@ def job():
                 state.increment_error(course_id)
                 error_count = state.get_error_count(course_id)
                 if error_count >= SILENCE_THRESHOLD:
+                    silence_until = state.get_silence_until(course_id)
+                    silence_info = (
+                        f"\n靜默至：{silence_until.strftime('%H:%M:%S')}"
+                        if silence_until else ""
+                    )
                     error_msg = (
                         f"⚠️ 課程 {course_id} 連續抓取失敗 {error_count} 次，\n"
-                        f"已進入退避靜默。\n錯誤訊息：{str(e)}"
+                        f"已進入退避靜默。{silence_info}\n錯誤訊息：{str(e)}"
                     )
                     try:
                         notifier.send_message(error_msg)
@@ -188,6 +193,16 @@ def job():
                 state.mark_notified(course_id, ua.account)
             else:
                 logger.error(f"[{ua.account}] {course_id} 加選失敗: {reason}")
+                fail_msg = (
+                    f"❌ 加選失敗！\n"
+                    f"帳號：{ua.account}\n"
+                    f"課程：{name} ({course_id})\n"
+                    f"原因：{reason}"
+                )
+                try:
+                    notifier.send_message(fail_msg)
+                except Exception:
+                    pass
 
 
 if __name__ == "__main__":

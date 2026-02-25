@@ -61,6 +61,10 @@ class State:
         # 取得該課程的連續錯誤次數
         return self._course_errors.get(course_id, 0)
 
+    def get_silence_until(self, course_id: str) -> Optional[datetime.datetime]:
+        # 取得靜默截止時間（若無則回傳 None）
+        return self._course_silence.get(course_id)
+
     def is_already_notified(self, course_id: str, user_id: str) -> bool:
         # 檢查是否已對該使用者通知過該課程
         return (course_id, user_id) in self.notified_courses
