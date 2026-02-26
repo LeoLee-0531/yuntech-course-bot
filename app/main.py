@@ -183,25 +183,40 @@ def job():
             logger.info(f"[{ua.account}] 正在嘗試加選 {course_id}...")
             success, reason = ua.enroller.enroll(course_id)
 
+            # 永久性失敗關鍵字：確定無法加選，不需繼續監控
+            PERMANENT_FAIL_KEYWORDS = ["衝堂", "達修課上限", "已加選"]
+            is_permanent = not success and any(kw in reason for kw in PERMANENT_FAIL_KEYWORDS)
+
             if success:
                 logger.success(f"[{ua.account}] 成功加選 {course_id}")
-                msg = (
-                    f"🎉 選課成功！\n"
-                    f"課程：{name} ({course_id})"
-                )
-                notifier.send_message(msg)
-                # 成功後從 users.json 移除
+                notifier.send_message(f"🎉 選課成功！\n課程：{name} ({course_id})")
                 remove_course_from_config(ua.account, course_id)
+                # 同一 job cycle 內也移除，避免重複嘗試
+                if course_id in ua.courses:
+                    ua.courses.remove(course_id)
+            elif is_permanent:
+                logger.warning(f"[{ua.account}] {course_id} 停止監控：{reason}")
+                remove_course_from_config(ua.account, course_id)
+                if course_id in ua.courses:
+                    ua.courses.remove(course_id)
+                try:
+                    notifier.send_message(
+                        f"⛔ 無法加選，已停止監控\n"
+                        f"學號：{ua.account}\n"
+                        f"課程：{name} ({course_id})\n"
+                        f"原因：{reason}"
+                    )
+                except Exception:
+                    pass
             else:
                 logger.error(f"[{ua.account}] {course_id} 加選失敗: {reason}")
-                fail_msg = (
-                    f"❌ 加選失敗！\n"
-                    f"帳號：{ua.account}\n"
-                    f"課程：{name} ({course_id})\n"
-                    f"原因：{reason}"
-                )
                 try:
-                    notifier.send_message(fail_msg)
+                    notifier.send_message(
+                        f"❌ 加選失敗！\n"
+                        f"學號：{ua.account}\n"
+                        f"課程：{name} ({course_id})\n"
+                        f"原因：{reason}"
+                    )
                 except Exception:
                     pass
 
