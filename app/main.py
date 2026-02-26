@@ -83,7 +83,7 @@ def load_config():
 
         if changed:
             accounts = [u["account"] for u in users_config]
-            logger.info(f"🔄 {USERS_JSON_PATH} 已更新，載入 {len(accounts)} 位使用者：{accounts}，監控課程：{new_all_target_courses}")
+            logger.info(f"{USERS_JSON_PATH} 已更新，載入 {len(accounts)} 位使用者：{accounts}，監控課程：{new_all_target_courses}")
 
     except Exception as e:
         logger.error(f"❌ Failed to reload {USERS_JSON_PATH}: {e}")
