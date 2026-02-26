@@ -5,5 +5,5 @@ services:
       - .env
     volumes:
       # 掛載 users.json (包含帳密資訊)
-      - ./users.json:/app/users.json:ro
+      - ./users.json:/app/users.json
     restart: always
