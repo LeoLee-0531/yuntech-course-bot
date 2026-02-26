@@ -1,7 +1,8 @@
+import hashlib
 import json
 import os
 import time
-import schedule
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 import requests.exceptions
@@ -39,21 +40,23 @@ captcha_solver = CaptchaSolver()
 # 動態更新的設定
 user_agents: list[UserAgent] = []
 all_target_courses: list[str] = []
-_last_users_json_mtime: float = 0.0
+_last_users_json_hash: str = ""
 
 USERS_JSON_PATH = os.getenv("USERS_JSON", "users.json")
 
 
 def load_config():
     # 重新載入 users.json 並更新全域狀態
-    global user_agents, all_target_courses, _last_users_json_mtime
+    global user_agents, all_target_courses, _last_users_json_hash
 
     try:
-        mtime = os.path.getmtime(USERS_JSON_PATH)
-        changed = mtime != _last_users_json_mtime
+        with open(USERS_JSON_PATH, "rb") as f:
+            raw = f.read()
 
-        with open(USERS_JSON_PATH, encoding="utf-8") as f:
-            users_config = json.load(f)
+        current_hash = hashlib.md5(raw).hexdigest()
+        changed = current_hash != _last_users_json_hash
+
+        users_config = json.loads(raw.decode("utf-8"))
 
         if not users_config:
             logger.warning(f"⚠️ {USERS_JSON_PATH} 為空，略過更新")
@@ -76,7 +79,7 @@ def load_config():
         # 更新全域變數
         user_agents = new_user_agents
         all_target_courses = new_all_target_courses
-        _last_users_json_mtime = mtime
+        _last_users_json_hash = current_hash
 
         if changed:
             accounts = [u["account"] for u in users_config]
@@ -204,12 +207,20 @@ def job():
 
 
 if __name__ == "__main__":
-    schedule.every(INTERVAL).seconds.do(job)
     logger.info(f"Course Bot started")
 
-    # 啟動時執行一次
+    # 啟動時執行一次（同步）
     job()
 
+    # 最長容許 job() 執行的時間（防止卡住）
+    JOB_TIMEOUT = INTERVAL * 4
+
     while True:
-        schedule.run_pending()
-        time.sleep(1)
+        time.sleep(INTERVAL)
+
+        # 在 daemon thread 中執行 job，避免卡住主迴圈
+        t = threading.Thread(target=job, daemon=True)
+        t.start()
+        t.join(timeout=JOB_TIMEOUT)
+        if t.is_alive():
+            logger.warning(f"⚠️ job() 執行超過 {JOB_TIMEOUT}s，已放棄本次執行，下次繼續")
